@@ -428,6 +428,7 @@ namespace openvpn {
 	MyClientEvents::Ptr events;
 	ClientConnect::Ptr session;
 	std::unique_ptr<MyClockTick> clock_tick;
+	OVERLAPPED basicEventOverlap;
 
 	// extra settings submitted by API client
 	std::string server_override;
@@ -435,6 +436,7 @@ namespace openvpn {
 	Protocol proto_override;
 	IP::Addr::Version proto_version_override;
 	IPv6Setting ipv6;
+	bool is_Monitoring_Routing_Table = true;
 	int conn_timeout = 0;
 	bool tun_persist = false;
 	bool wintun = false;
@@ -515,6 +517,7 @@ namespace openvpn {
 
 	~ClientState()
 	{
+	  CancelIPChangeNotify(&basicEventOverlap);
 	  stop_scope_local.reset();
 	  stop_scope_global.reset();
 	  socket_protect.detach_from_parent();
@@ -831,6 +834,52 @@ namespace openvpn {
       return true;
     }
 
+	OPENVPN_CLIENT_EXPORT void OpenVPNClient::listen_To_Routing_Table()
+	{
+		DWORD ret;
+		HANDLE hand = NULL;
+
+		state->is_Monitoring_Routing_Table = true;
+		state->basicEventOverlap.hEvent = WSACreateEvent();
+		
+		try
+		{
+			ret = NotifyRouteChange(&hand, &state->basicEventOverlap);
+
+			if (ret != NO_ERROR)
+			{
+				if (WSAGetLastError() != WSA_IO_PENDING)
+				{
+					ClientEvent::Base::Ptr ev = new ClientEvent::Info("NotifyRouteChange error..." + openvpn::to_string(WSAGetLastError()));
+					state->events->add_event(ev);
+					return;
+				}
+			}
+
+			if (WaitForSingleObject(state->basicEventOverlap.hEvent, INFINITE) == WAIT_OBJECT_0)
+			{
+				if (state->is_Monitoring_Routing_Table)
+				{
+					ClientEvent::Base::Ptr ev = new ClientEvent::RouteTableError("Routing table changed");
+					state->events->add_event(ev);
+				}
+			}
+		}
+		catch (const std::exception&)
+		{
+			ClientEvent::Base::Ptr ev = new ClientEvent::RouteTableError("error caught listening to routing table.. ");
+			state->events->add_event(ev);
+			return;
+		}
+	}
+
+	OPENVPN_CLIENT_EXPORT void OpenVPNClient::stop_Routing_Table_Monitoring()
+	{
+		//set this so the client is not notified that the routing table changed. Only the monitoring.
+		state->is_Monitoring_Routing_Table = false;
+		CancelIPChangeNotify(&state->basicEventOverlap);
+	}
+
     OPENVPN_CLIENT_EXPORT bool OpenVPNClient::parse_dynamic_challenge(const std::string& cookie, DynamicChallenge& dc)
     {
       try {
@@ -1117,6 +1166,7 @@ namespace openvpn {
 
     OPENVPN_CLIENT_EXPORT void OpenVPNClient::connect_pre_run()
     {
+		OPENVPN_LOG("pre_run steps ");
     }
 
     OPENVPN_CLIENT_EXPORT void OpenVPNClient::connect_run()
