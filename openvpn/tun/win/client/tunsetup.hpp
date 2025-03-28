@@ -20,10 +20,12 @@
 #include <memory>
 #include <utility>
 #include <thread>
+#include <algorithm>
 
 #include <openvpn/common/exception.hpp>
 #include <openvpn/common/rc.hpp>
 #include <openvpn/common/string.hpp>
+#include <openvpn/common/wstring.hpp>
 #include <openvpn/common/size.hpp>
 #include <openvpn/common/arraysize.hpp>
 #include <openvpn/error/excode.hpp>
@@ -239,7 +241,7 @@ class Setup : public SetupBase
 
         delete_route_timer.cancel();
 
-        vpn_interface_index_ = DWORD(-1);
+        vpn_interface_index_ = INVALID_ADAPTER_INDEX;
     }
 
     virtual ~Setup()
@@ -248,7 +250,7 @@ class Setup : public SetupBase
         destroy(os);
     }
 
-    DWORD vpn_interface_index() const
+    DWORD vpn_interface_index() const override
     {
         return vpn_interface_index_;
     }
@@ -291,29 +293,27 @@ class Setup : public SetupBase
     class UseDNS
     {
       public:
-        UseDNS()
-        {
-        }
+        UseDNS() = default;
 
         UseDNS(const TunBuilderCapture &pull)
         {
-            for (auto &ds : pull.dns_servers)
-                add(ds, pull);
+            if (pull.dns_options.servers.empty())
+                return;
+            for (const auto &addr : pull.dns_options.servers.begin()->second.addresses)
+                add(addr, pull);
         }
 
-        static bool enabled(const TunBuilderCapture::DNSServer &ds,
+        static bool enabled(const DnsAddress &addr,
                             const TunBuilderCapture &pull)
         {
-            if (ds.ipv6 && pull.block_ipv6)
-                return false;
-            return true;
+            return IP::Addr(addr.address).is_ipv6() && pull.block_ipv6 ? false : true;
         }
 
-        int add(const TunBuilderCapture::DNSServer &ds,
+        int add(const DnsAddress &addr,
                 const TunBuilderCapture &pull)
         {
-            if (enabled(ds, pull))
-                return indices[ds.ipv6 ? 1 : 0]++;
+            if (enabled(addr, pull))
+                return indices[IP::Addr(addr.address).is_ipv6() ? 1 : 0]++;
             else
                 return -1;
         }
@@ -606,39 +606,62 @@ class Setup : public SetupBase
 
         // Process DNS related settings
         {
-            if (!pull.dns_options.servers.empty())
+            if (!pull.dns_options.from_dhcp_options)
             {
                 // apply DNS settings from --dns options
-                const DnsServer &server = pull.dns_options.servers.begin()->second;
-
-                // DNS server address(es)
                 std::vector<std::string> addresses;
-                for (const auto &addr : server.addresses)
-                {
-                    addresses.push_back(addr.address.to_string());
-                }
-
-                // DNS server split domain(s)
-                std::vector<std::string> domains;
-                for (const auto &dom : server.domains)
-                {
-                    domains.push_back("." + dom.domain);
-                }
-
-                const bool dnssec = server.dnssec == DnsServer::Security::Yes;
-
-                std::string delimiter;
+                std::vector<std::string> split_domains;
+                std::vector<std::wstring> wide_search_domains;
                 std::string search_domains;
-                for (const auto &domain : pull.dns_options.search_domains)
+                bool dnssec = false;
+
+                for (const auto &[priority, server] : pull.dns_options.servers)
                 {
-                    search_domains.append(delimiter + domain.to_string());
-                    delimiter = ",";
+                    bool secure_transport = server.transport == DnsServer::Transport::HTTPS
+                                            || server.transport == DnsServer::Transport::TLS;
+                    bool custom_port = std::any_of(server.addresses.begin(),
+                                                   server.addresses.end(),
+                                                   [&](const DnsAddress &a)
+                                                   { return a.port != 0 && a.port != 53; });
+                    if (secure_transport || custom_port)
+                    {
+                        continue; // unsupported, try next server
+                    }
+
+                    // DNS server address(es)
+                    for (const auto &addr : server.addresses)
+                    {
+                        addresses.push_back(addr.address);
+                    }
+
+                    // DNS server split domain(s)
+                    for (const auto &dom : server.domains)
+                    {
+                        split_domains.push_back("." + dom.domain);
+                    }
+
+                    std::string delimiter;
+                    for (const auto &domain : pull.dns_options.search_domains)
+                    {
+                        wide_search_domains.emplace_back(wstring::from_utf8(domain.to_string()));
+                        search_domains.append(delimiter + domain.to_string());
+                        delimiter = ",";
+                    }
+
+                    dnssec = server.dnssec == DnsServer::Security::Yes;
+                    break;
+                }
+
+                // disconnect if we didn't find a compatible DNS server profile
+                if (!pull.dns_options.servers.empty() && addresses.empty())
+                {
+                    throw tun_win_setup("no applicable DNS server config found");
                 }
 
                 // To keep local resolvers working, only split rules must be created
-                if (!allow_local_dns_resolvers || !domains.empty())
+                if (!allow_local_dns_resolvers || !split_domains.empty())
                 {
-                    create.add(new NRPT::ActionCreate(pid, domains, addresses, dnssec));
+                    create.add(new NRPT::ActionCreate(pid, split_domains, addresses, wide_search_domains, dnssec));
                     destroy.add(new NRPT::ActionDelete(pid));
                 }
 
@@ -665,9 +688,10 @@ class Setup : public SetupBase
 
                 // count IPv4/IPv6 DNS servers
                 const UseDNS dns(pull);
+                const DnsServer &server = pull.dns_options.servers.begin()->second;
 
                 // will DNS requests be split between VPN DNS server and local?
-                const bool split_dns = (!pull.search_domains.empty()
+                const bool split_dns = (!server.domains.empty()
                                         && !(pull.reroute_gw.ipv4 && dns.ipv4())
                                         && !(pull.reroute_gw.ipv6 && dns.ipv6()));
 
@@ -700,18 +724,18 @@ class Setup : public SetupBase
                     }
 
                     UseDNS dc;
-                    for (auto &ds : pull.dns_servers)
+                    for (const auto &ip : server.addresses)
                     {
                         // 0-based index for specific IPv4/IPv6 protocol, or -1 if disabled
-                        const int count = dc.add(ds, pull);
+                        const int count = dc.add(ip, pull);
                         if (count >= 0)
                         {
-                            const std::string proto = ds.ipv6 ? "ipv6" : "ip";
+                            const std::string proto = IP::Addr(ip.address).is_ipv6() ? "ipv6" : "ip";
                             if (count)
-                                create.add(new WinCmd("netsh interface " + proto + " add " + dns_servers_cmd + " " + tap_index_name + ' ' + ds.address + " " + to_string(count + 1) + validate_cmd));
+                                create.add(new WinCmd("netsh interface " + proto + " add " + dns_servers_cmd + " " + tap_index_name + ' ' + ip.address + " " + to_string(count + 1) + validate_cmd));
                             else
                             {
-                                create.add(new WinCmd("netsh interface " + proto + " set " + dns_servers_cmd + " " + tap_index_name + " static " + ds.address + " register=primary" + validate_cmd));
+                                create.add(new WinCmd("netsh interface " + proto + " set " + dns_servers_cmd + " " + tap_index_name + " static " + ip.address + " register=primary" + validate_cmd));
                                 destroy.add(new WinCmd("netsh interface " + proto + " delete " + dns_servers_cmd + " " + tap_index_name + " all" + validate_cmd));
                             }
                         }
@@ -733,7 +757,7 @@ class Setup : public SetupBase
                     // Otherwise, route all DNS requests with wildcard (".").
                     if (split_dns)
                     {
-                        for (const auto &sd : pull.search_domains)
+                        for (const auto &sd : server.domains)
                         {
                             std::string dom = sd.domain;
                             if (!dom.empty())
@@ -748,13 +772,18 @@ class Setup : public SetupBase
 
                     // DNS server list
                     std::vector<std::string> dserv;
-                    for (const auto &ds : pull.dns_servers)
-                        dserv.push_back(ds.address);
+                    for (const auto &ip : server.addresses)
+                        dserv.push_back(IP::Addr(ip.address).to_string());
 
                     // To keep local resolvers working, only split rules must be created
                     if (!allow_local_dns_resolvers || !split_domains.empty())
                     {
-                        create.add(new NRPT::ActionCreate(pid, split_domains, dserv, false));
+                        std::vector<std::wstring> wide_search_domains;
+                        for (const auto &domain : pull.dns_options.search_domains)
+                        {
+                            wide_search_domains.emplace_back(wstring::from_utf8(domain.to_string()));
+                        }
+                        create.add(new NRPT::ActionCreate(pid, split_domains, dserv, wide_search_domains, false));
                         destroy.add(new NRPT::ActionDelete(pid));
 
                         // Apply changes to DNS settings
@@ -765,10 +794,11 @@ class Setup : public SetupBase
 
                 // Set a default TAP-adapter domain suffix using
                 // "dhcp-option ADAPTER_DOMAIN_SUFFIX mycompany.com" directive.
-                if (!pull.adapter_domain_suffix.empty())
+                if (!pull.dns_options.search_domains.empty())
                 {
                     // Only the first search domain is used
-                    create.add(new Util::ActionSetAdapterDomainSuffix(pull.adapter_domain_suffix, tap.guid));
+                    const std::string adapter_domain_suffix = pull.dns_options.search_domains[0].domain;
+                    create.add(new Util::ActionSetAdapterDomainSuffix(adapter_domain_suffix, tap.guid));
                     destroy.add(new Util::ActionSetAdapterDomainSuffix("", tap.guid));
                 }
 
@@ -896,7 +926,7 @@ class Setup : public SetupBase
     std::unique_ptr<std::thread> l2_thread;
     std::unique_ptr<L2State> l2_state;
 
-    DWORD vpn_interface_index_ = DWORD(-1);
+    DWORD vpn_interface_index_ = INVALID_ADAPTER_INDEX;
     ActionList::Ptr remove_cmds;
 
     AsioTimer delete_route_timer;

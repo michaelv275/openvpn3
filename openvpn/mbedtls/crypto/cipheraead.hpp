@@ -22,14 +22,12 @@
 #include <openvpn/common/likely.hpp>
 #include <openvpn/crypto/static_key.hpp>
 #include <openvpn/crypto/cryptoalgs.hpp>
+#include <openvpn/crypto/aead_usage_limit.hpp>
 #include <openvpn/mbedtls/crypto/cipher.hpp>
 
 namespace openvpn::MbedTLSCrypto {
 class CipherContextAEAD : public CipherContextCommon
 {
-    CipherContextAEAD(const CipherContextAEAD &) = delete;
-    CipherContextAEAD &operator=(const CipherContextAEAD &) = delete;
-
   public:
     OPENVPN_EXCEPTION(mbedtls_aead_error);
 
@@ -55,6 +53,23 @@ class CipherContextAEAD : public CipherContextCommon
     {
         erase();
     }
+
+    CipherContextAEAD(CipherContextAEAD &&other) noexcept
+        : CipherContextCommon(std::move(other)), aead_usage_limit_(other.aead_usage_limit_)
+    {
+    }
+
+    CipherContextAEAD &operator=(CipherContextAEAD &&other)
+    {
+        CipherContextAEAD temp(std::move(other));
+        ctx = temp.ctx;
+        initialized = temp.initialized;
+        temp.ctx = {};
+        temp.initialized = false;
+        aead_usage_limit_ = temp.aead_usage_limit_;
+        return *this;
+    }
+
 
     void init(SSLLib::Ctx libctx,
               const CryptoAlgs::Type alg,
@@ -84,6 +99,7 @@ class CipherContextAEAD : public CipherContextCommon
         if (mbedtls_cipher_setkey(&ctx, key, ckeysz * 8, (mbedtls_operation_t)mode) < 0)
             throw mbedtls_aead_error("mbedtls_cipher_setkey");
 
+        aead_usage_limit_ = {alg};
         initialized = true;
     }
 
@@ -111,6 +127,13 @@ class CipherContextAEAD : public CipherContextCommon
                                                            AUTH_TAG_LEN);
         if (unlikely(status))
             OPENVPN_THROW(mbedtls_aead_error, "mbedtls_cipher_auth_encrypt failed with status=" << status);
+        aead_usage_limit_.update(length + ad_len);
+    }
+
+    /** Returns the AEAD usage limit associated with this AEAD cipher instance to check the limits */
+    [[nodiscard]] const Crypto::AEADUsageLimit &get_usage_limit()
+    {
+        return aead_usage_limit_;
     }
 
     /**
@@ -171,6 +194,7 @@ class CipherContextAEAD : public CipherContextCommon
     }
 
   private:
+    Crypto::AEADUsageLimit aead_usage_limit_ = {};
     static mbedtls_cipher_type_t cipher_type(const CryptoAlgs::Type alg, unsigned int &keysize)
     {
         switch (alg)

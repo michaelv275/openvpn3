@@ -42,7 +42,7 @@ struct SslApiBuilder
     SslApiBuilder(SSLLib::SSLAPI::Config::Ptr cfg)
         : mConfig(std::move(cfg)),
           mFactory(mConfig->new_factory()),
-          mServer(mFactory->ssl()){};
+          mServer(mFactory->ssl()) {};
 
     SslApiBuilder(const SslApiBuilder &) = delete;
     SslApiBuilder(SslApiBuilder &&) noexcept = delete;
@@ -124,7 +124,7 @@ inline AccHandshaker::MsgT AccHandshaker::process_msg(const MsgT &msg)
     {
         api.write_ciphertext(BufferAllocatedRc::Create(reinterpret_cast<const unsigned char *>(msg->c_str()),
                                                        msg->size(),
-                                                       0));
+                                                       BufAllocFlags::NO_FLAGS));
 
         // Won't handshake without this even though there is no data available.
         uint8_t cleartext[8];

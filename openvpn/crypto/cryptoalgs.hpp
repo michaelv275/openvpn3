@@ -90,14 +90,13 @@ enum Mode
     MODE_UNDEF = 0,
     CBC_HMAC,
     AEAD,
-    MODE_MASK = 0x03,
 };
 
 enum AlgFlags
-{                         // bits below must start after Mode bits
-    F_CIPHER = (1 << 2),  // alg is a cipher
-    F_DIGEST = (1 << 3),  // alg is a digest
-    F_ALLOW_DC = (1 << 4) // alg may be used in OpenVPN data channel
+{
+    F_CIPHER = (1 << 0),  // alg is a cipher
+    F_DIGEST = (1 << 1),  // alg is a digest
+    F_ALLOW_DC = (1 << 2) // alg may be used in OpenVPN data channel
 };
 
 // size in bytes of AEAD "nonce tail" normally taken from
@@ -112,15 +111,19 @@ class Alg
   public:
     constexpr Alg(const char *name,
                   const unsigned int flags,
+                  const Mode mode,
                   const unsigned int size,
                   const unsigned int iv_length,
-                  const unsigned int block_size)
+                  const unsigned int block_size,
+                  uint64_t aead_usage_limit)
 
         : name_(name),
           flags_(flags),
+          mode_(mode),
           size_(size),
           iv_length_(iv_length),
-          block_size_(block_size)
+          block_size_(block_size),
+          aead_usage_limit_(aead_usage_limit)
     {
     }
 
@@ -131,10 +134,10 @@ class Alg
     unsigned int flags() const
     {
         return flags_;
-    } // contains Mode and AlgFlags
+    }
     Mode mode() const
     {
-        return Mode(flags_ & MODE_MASK);
+        return mode_;
     }
     size_t size() const
     {
@@ -169,35 +172,47 @@ class Alg
             flags_ &= ~F_ALLOW_DC;
     }
 
+    /** Returns the number q + s of total invocations + plain text blocks that should not be
+     *  exceeded */
+    uint64_t aead_usage_limit() const
+    {
+        return aead_usage_limit_;
+    }
+
   private:
     const char *name_;
     unsigned int flags_;
+    Mode mode_;
     unsigned int size_;
     unsigned int iv_length_;
     unsigned int block_size_;
+    uint64_t aead_usage_limit_;
 };
+
+/** The limit for AES-GCM ciphers according to https://datatracker.ietf.org/doc/draft-irtf-cfrg-aead-limits/ */
+static constexpr uint64_t gcm_limit = (1ull << 36) - 1;
 
 inline std::array<Alg, Type::SIZE> algs = {
     // clang-format off
-    Alg{"none",               F_CIPHER|F_DIGEST|CBC_HMAC,   0,  0,  0 },
-    Alg{"AES-128-CBC",        F_CIPHER|CBC_HMAC,           16, 16, 16 },
-    Alg{"AES-192-CBC",        F_CIPHER|CBC_HMAC,           24, 16, 16 },
-    Alg{"AES-256-CBC",        F_CIPHER|CBC_HMAC,           32, 16, 16 },
-    Alg{"DES-CBC",            F_CIPHER|CBC_HMAC,            8,  8,  8 },
-    Alg{"DES-EDE3-CBC",       F_CIPHER|CBC_HMAC,           24,  8,  8 },
-    Alg{"BF-CBC",             F_CIPHER|CBC_HMAC,           16,  8,  8 },
-    Alg{"AES-256-CTR",        F_CIPHER,                    32, 16, 16 },
-    Alg{"AES-128-GCM",        F_CIPHER|AEAD,               16, 12, 16 },
-    Alg{"AES-192-GCM",        F_CIPHER|AEAD,               24, 12, 16 },
-    Alg{"AES-256-GCM",        F_CIPHER|AEAD,               32, 12, 16 },
-    Alg{"CHACHA20-POLY1305",  F_CIPHER|AEAD,               32, 12, 16 },
-    Alg{"MD4",                F_DIGEST,                    16,  0,  0 },
-    Alg{"MD5",                F_DIGEST,                    16,  0,  0 },
-    Alg{"SHA1",               F_DIGEST,                    20,  0,  0 },
-    Alg{"SHA224",             F_DIGEST,                    28,  0,  0 },
-    Alg{"SHA256",             F_DIGEST,                    32,  0,  0 },
-    Alg{"SHA384",             F_DIGEST,                    48,  0,  0 },
-    Alg{"SHA512",             F_DIGEST,                    64,  0,  0 }
+    Alg{"none",               F_CIPHER|F_DIGEST, CBC_HMAC,   0,  0,  0, 0 },
+    Alg{"AES-128-CBC",        F_CIPHER,          CBC_HMAC,  16, 16, 16, 0 },
+    Alg{"AES-192-CBC",        F_CIPHER,          CBC_HMAC,  24, 16, 16, 0 },
+    Alg{"AES-256-CBC",        F_CIPHER,          CBC_HMAC,  32, 16, 16, 0 },
+    Alg{"DES-CBC",            F_CIPHER,          CBC_HMAC,    8,  8,  8, 0 },
+    Alg{"DES-EDE3-CBC",       F_CIPHER,          CBC_HMAC,   24,  8,  8, 0 },
+    Alg{"BF-CBC",             F_CIPHER,          CBC_HMAC,   16,  8,  8, 0 },
+    Alg{"AES-256-CTR",        F_CIPHER,          MODE_UNDEF, 32, 16, 16, 0 },
+    Alg{"AES-128-GCM",        F_CIPHER,          AEAD,       16, 12, 16, gcm_limit },
+    Alg{"AES-192-GCM",        F_CIPHER,          AEAD,       24, 12, 16, gcm_limit },
+    Alg{"AES-256-GCM",        F_CIPHER,          AEAD,       32, 12, 16, gcm_limit },
+    Alg{"CHACHA20-POLY1305",  F_CIPHER,          AEAD,       32, 12, 16, 0 },
+    Alg{"MD4",                F_DIGEST,          MODE_UNDEF, 16,  0,  0, 0 },
+    Alg{"MD5",                F_DIGEST,          MODE_UNDEF, 16,  0,  0, 0 },
+    Alg{"SHA1",               F_DIGEST,          MODE_UNDEF, 20,  0,  0, 0 },
+    Alg{"SHA224",             F_DIGEST,          MODE_UNDEF, 28,  0,  0, 0 },
+    Alg{"SHA256",             F_DIGEST,          MODE_UNDEF, 32,  0,  0, 0 },
+    Alg{"SHA384",             F_DIGEST,          MODE_UNDEF, 48,  0,  0, 0 },
+    Alg{"SHA512",             F_DIGEST,          MODE_UNDEF, 64,  0,  0, 0 }
     // clang-format on
 };
 
@@ -281,6 +296,12 @@ inline Mode mode(const Type type)
     return alg.mode();
 }
 
+inline uint64_t aead_usage_limit(const Type type)
+{
+    const Alg &alg = get(type);
+    return alg.aead_usage_limit();
+}
+
 inline Type legal_dc_cipher(const Type type)
 {
     const Alg &alg = get(type);
@@ -300,7 +321,7 @@ inline Type legal_dc_digest(const Type type)
 inline Type dc_cbc_cipher(const Type type)
 {
     const Alg &alg = get(type);
-    if (!(alg.flags() & CBC_HMAC))
+    if (!(alg.mode() == CBC_HMAC))
         OPENVPN_THROW(crypto_alg, alg.name() << ": bad cipher for data channel use");
     return type;
 }
@@ -312,7 +333,6 @@ inline Type dc_cbc_hash(const Type type)
         OPENVPN_THROW(crypto_alg, alg.name() << ": bad digest for data channel use");
     return type;
 }
-
 
 inline void allow_dc_algs(const std::list<Type> types)
 {

@@ -31,6 +31,7 @@ set(CORE_TEST_DEFINES
 add_executable(coreUnitTests
         core_tests.cpp
         test_acc.cpp
+        test_alignment.cpp
         test_acc_certcheck.cpp
         test_route_emulation.cpp
         test_log.cpp
@@ -68,6 +69,7 @@ add_executable(coreUnitTests
         test_pktid_data.cpp
         test_prefixlen.cpp
         test_randapi.cpp
+        test_intrinsic_type.cpp
         test_rc.cpp
         test_route.cpp
         test_reliable.cpp

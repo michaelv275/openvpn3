@@ -28,13 +28,24 @@ else ()
 endif ()
 
 function(add_ssl_library target)
+    find_package(PkgConfig REQUIRED)
     if (${USE_MBEDTLS})
-        find_package(mbedTLS REQUIRED)
-        set(SSL_LIBRARY mbedTLS::mbedTLS)
+        # mbedtls3.6 for Fedora 41+
+        pkg_search_module(mbedTLS IMPORTED_TARGET mbedtls3.6 mbedtls)
+        if (mbedTLS_FOUND)
+            # Only added as Requires.Private, so we need to look them up ourselves
+            pkg_search_module(mbedCrypto REQUIRED IMPORTED_TARGET mbedcrypto3.6 mbedcrypto)
+            pkg_search_module(mbedX509 REQUIRED IMPORTED_TARGET mbedx5093.6 mbedx509)
+            set(SSL_LIBRARY PkgConfig::mbedTLS PkgConfig::mbedCrypto PkgConfig::mbedX509)
+        else ()
+            # mbedTLS 2.x doesn't have pkg-config files
+            find_package(mbedTLS REQUIRED)
+            set(SSL_LIBRARY mbedTLS::mbedTLS)
+        endif ()
         target_compile_definitions(${target} PRIVATE -DUSE_MBEDTLS)
     else ()
-        find_package(OpenSSL REQUIRED)
-        SET(SSL_LIBRARY OpenSSL::SSL)
+        pkg_search_module(OpenSSL REQUIRED IMPORTED_TARGET openssl)
+        SET(SSL_LIBRARY PkgConfig::OpenSSL)
         target_compile_definitions(${target} PRIVATE -DUSE_OPENSSL)
     endif ()
 
@@ -43,6 +54,28 @@ endfunction()
 
 
 function(add_core_dependencies target)
+    # It would be nice if we could just do organise the files that make up the OpenVPN3 core library in
+    # a static library called openvpn3 or similar and be able to do
+    #      target_link_libraries(${target} openvpn3)
+    # here.
+    #
+    # Unfortunately, too much currently depends on per-target compile flags and defines like #define OPENVPN_LOG
+    # that require compilation of all core files as part of the target that uses the core library.
+    #
+    # If even with this approach of adding some extra files to the sources of a target, we need to careful that
+    # we are depending on definitions that are can be defined differently in another compilation unit.
+    #
+    # Until we refactor these problematic defines to be in a common header (like config.h in autoconf land)
+    # or in set then for the whole target in the cmake files (instead of using #define xy in the top of a cpp file)
+    # we have to live with this restriction.
+    #
+    # The unit test work around this problem by always including test_common.h as very first include in every
+    # file that double as a config.h equivalent.
+    add_corelibrary_dependencies(${target})
+    target_sources(${target} PRIVATE ${CORE_DIR}/openvpn/crypto/data_epoch.cpp)
+endfunction()
+
+function(add_corelibrary_dependencies target)
     set(PLAT ${OPENVPN_PLAT})
 
     target_include_directories(${target} PRIVATE ${CORE_DIR})
@@ -119,6 +152,7 @@ function(add_core_dependencies target)
             target_compile_options(${target} PRIVATE /WX)
         else ()
             target_compile_options(${target} PRIVATE -Werror)
+            target_link_options(${target} PRIVATE -Werror)
         endif ()
     endif ()
 
@@ -137,10 +171,9 @@ function(add_core_dependencies target)
         endif()
         if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             # display all warnings
-            target_compile_options(${target} PRIVATE -ferror-limit=0 -Wno-enum-enum-conversion)
+            target_compile_options(${target} PRIVATE -ferror-limit=0)
         endif()
     endif()
-
 endfunction()
 
 function (add_json_library target)

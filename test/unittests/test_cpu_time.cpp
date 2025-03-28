@@ -29,7 +29,7 @@
 
 // #define DEBUG  // Define this macro to get more details
 
-#include "test_common.h"
+#include "test_common.hpp"
 #include <cstdint>
 #include <unistd.h>
 #include <memory>
@@ -170,7 +170,7 @@ void run_threads(const uint8_t num_threads)
         ThreadPtr tp;
         tp = std::make_shared<std::thread>([id = i]()
                                            { worker_thread(id); });
-        threads.push_back(tp);
+        threads.push_back(std::move(tp));
     }
 
     for (const auto &t : threads)

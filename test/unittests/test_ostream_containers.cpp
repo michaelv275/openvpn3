@@ -1,4 +1,4 @@
-#include "test_common.h"
+#include "test_common.hpp"
 
 #include <openvpn/common/ostream_containers.hpp>
 #include <list>
@@ -23,8 +23,8 @@ TEST(ostream_container, simple_vector_int)
 template <typename Container>
 struct TestItem
 {
-    TestItem(const Container &&c, const std::string &&s)
-        : container(c), expected(s)
+    TestItem(Container &&c, std::string &&s)
+        : container(std::move(c)), expected(std::move(s))
     {
     }
 

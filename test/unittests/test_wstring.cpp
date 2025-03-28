@@ -10,7 +10,7 @@
 //
 
 
-#include "test_common.h"
+#include "test_common.hpp"
 
 #include <openvpn/common/wstring.hpp>
 
@@ -64,14 +64,6 @@ TEST_F(WStringTest, ToUtf8)
     std::string utf8_shigeru = wstring::to_utf8(wide_shigeru);
     EXPECT_EQ(utf8_shigeru.size(), shigeru.size());
     EXPECT_TRUE(utf8_shigeru == shigeru);
-}
-
-TEST_F(WStringTest, ToCArray)
-{
-    auto array_ptr = wstring::to_wchar_t(wide_jojo);
-    EXPECT_TRUE(::wcslen(array_ptr.get()) == wide_jojo.size());
-    EXPECT_TRUE(::wcscmp(array_ptr.get(), wide_jojo.c_str()) == 0);
-    EXPECT_TRUE(std::wstring(array_ptr.get()) == wide_jojo);
 }
 
 TEST_F(WStringTest, MultiSzFromVector)

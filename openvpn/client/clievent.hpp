@@ -71,6 +71,8 @@ enum Type
     TLS_ALERT_HANDSHAKE_FAILURE,
     TLS_ALERT_CERTIFICATE_EXPIRED,
     TLS_ALERT_CERTIFICATE_REVOKED,
+    TLS_ALERT_BAD_CERTIFICATE,
+    TLS_ALERT_UNSUPPORTED_CERTIFICATE,
     TLS_SIGALG_DISALLOWED_OR_UNSUPPORTED,
     CLIENT_HALT,
     CLIENT_SETUP,
@@ -142,6 +144,8 @@ inline const char *event_name(const Type type)
         "TLS_ALERT_HANDSHAKE_FAILURE",
         "TLS_ALERT_CERTIFICATE_EXPIRED",
         "TLS_ALERT_CERTIFICATE_REVOKED",
+        "TLS_ALERT_BAD_CERTIFICATE",
+        "TLS_ALERT_UNSUPPORTED_CERTIFICATE",
         "TLS_SIGALG_DISALLOWED_OR_UNSUPPORTED",
         "CLIENT_HALT",
         "CLIENT_SETUP",
@@ -374,6 +378,22 @@ struct TLSAlertCertificateRevoked : public Base
     }
 };
 
+struct TLSAlertBadCertificate : public Base
+{
+    TLSAlertBadCertificate()
+        : Base(TLS_ALERT_BAD_CERTIFICATE)
+    {
+    }
+};
+
+struct TLSAlertUnsupportedCertificate : public Base
+{
+    TLSAlertUnsupportedCertificate()
+        : Base(TLS_ALERT_UNSUPPORTED_CERTIFICATE)
+    {
+    }
+};
+
 struct TLSSigAlgDisallowedOrUnsupported : public Base
 {
     TLSSigAlgDisallowedOrUnsupported()
@@ -466,6 +486,7 @@ struct Connected : public Base
     std::string vpn_mtu;
     std::string client_ip;
     std::string tun_name;
+    std::uint32_t vpn_interface_index = static_cast<uint32_t>(-1);
 
     std::string render() const override
     {

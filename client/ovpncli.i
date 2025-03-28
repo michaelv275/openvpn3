@@ -6,6 +6,7 @@
 
 %include "std_string.i" // for std::string typemaps
 %include "std_vector.i"
+%include "std_map.i"
 
 // top-level C++ implementation file
 %{
@@ -17,6 +18,8 @@
 %apply int { openvpn_io::detail::socket_type };
 %apply int { asio::detail::socket_type };
 #endif
+
+%apply size_t { openvpn::Error::Type };
 
 // ignore these ClientAPI::OpenVPNClient bases
 %ignore openvpn::ClientAPI::LogReceiver;
@@ -54,8 +57,12 @@ namespace std {
   %template(ClientAPI_LLVector) vector<long long>;
   %template(ClientAPI_StringVec) vector<string>;
 };
+%template(DnsOptions_AddressList) std::vector<openvpn::DnsAddress>;
+%template(DnsOptions_DomainsList) std::vector<openvpn::DnsDomain>;
+%template(DnsOptions_ServersMap) std::map<int, openvpn::DnsServer>;
 
 // interface to be bridged between C++ and target language
+%include "openvpn/client/dns_options.hpp"
 %include "openvpn/pki/epkibase.hpp"
 %include "openvpn/tun/builder/base.hpp"
 %import  "openvpn/tun/extern/fw.hpp"     // ignored

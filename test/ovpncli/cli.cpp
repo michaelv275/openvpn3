@@ -162,11 +162,6 @@ class ClientBase : public ClientAPI::OpenVPNClient
         return tbc.tun_builder_set_session_name(name);
     }
 
-    bool tun_builder_add_dns_server(const std::string &address, bool ipv6) override
-    {
-        return tbc.tun_builder_add_dns_server(address, ipv6);
-    }
-
     void tun_builder_teardown(bool disconnect) override
     {
         std::ostringstream os;
@@ -183,9 +178,9 @@ class ClientBase : public ClientAPI::OpenVPNClient
         return tun->add_bypass_route(remote, ipv6, os);
     }
 
-    bool tun_builder_add_dns_options(const DnsOptions &dns) override
+    bool tun_builder_set_dns_options(const DnsOptions &dns) override
     {
-        return tbc.tun_builder_add_dns_options(dns);
+        return tbc.tun_builder_set_dns_options(dns);
     }
 
     bool tun_builder_set_mtu(int mtu) override
@@ -352,12 +347,14 @@ class Client : public ClientBase
         }
         else if (string::starts_with(acev.payload, "{\"dpc_request\"") && acev.payload.find("client_info") != std::string::npos)
         {
-            std::string fakeResponse{R"("dpc_response\": {
-                    "client_info" : {
-                            "os" :  {"type" : "FakeOS", "version" : "1.2.3.4" }
-                        }
-                    })"};
 
+            std::string fakeResponse{R"({"dpc_response": {
+                    "client_info" : {
+                            "os" :  {"type" : "Windows", "version" : "10.0.19045" }
+                        }
+                    }})"};
+
+            std::cout << "ACC DPC1: sending fake client info:" << fakeResponse << std::endl;
             send_app_control_channel_msg("dpc1", fakeResponse);
         }
         else if (string::starts_with(acev.payload, "{\"dpc_request\""))

@@ -252,7 +252,7 @@ class ClientConnect : ClientProto::NotifyCallback,
     void post_cc_msg(const std::string &msg)
     {
         if (!halt && client)
-            client->post_cc_msg(msg);
+            client->validate_and_post_cc_msg(msg);
     }
 
     void thread_safe_post_cc_msg(std::string msg)
@@ -455,7 +455,7 @@ class ClientConnect : ClientProto::NotifyCallback,
 
 
     template <typename ErrorClass>
-    void add_error_and_stop(const int error_code, const std::string &fatal_reason)
+    void add_error_and_stop(const Error::Type error_code, const std::string &fatal_reason)
     {
         ClientEvent::Base::Ptr ev = new ErrorClass{fatal_reason};
         client_options->events().add_event(std::move(ev));
@@ -464,7 +464,7 @@ class ClientConnect : ClientProto::NotifyCallback,
     }
 
     template <typename ErrorClass>
-    void add_error_and_stop(const int error_code)
+    void add_error_and_stop(const Error::Type error_code)
     {
         ClientEvent::Base::Ptr ev = new ErrorClass{};
         client_options->events().add_event(std::move(ev));
@@ -597,6 +597,12 @@ class ClientConnect : ClientProto::NotifyCallback,
                 case Error::TLS_ALERT_CERTIFICATE_REVOKED:
                     add_error_and_stop<ClientEvent::TLSAlertCertificateRevoked>(fatal_code);
                     break;
+                case Error::TLS_ALERT_BAD_CERTIFICATE:
+                    add_error_and_stop<ClientEvent::TLSAlertBadCertificate>(fatal_code);
+                    break;
+                case Error::TLS_ALERT_UNSUPPORTED_CERTIFICATE:
+                    add_error_and_stop<ClientEvent::TLSAlertUnsupportedCertificate>(fatal_code);
+                    break;
                 case Error::NEED_CREDS:
                     {
                         ClientEvent::Base::Ptr ev = new ClientEvent::NeedCreds();
@@ -612,7 +618,7 @@ class ClientConnect : ClientProto::NotifyCallback,
         }
     }
 
-    void handle_auth_failed(const int error_code, const std::string &reason)
+    void handle_auth_failed(const Error::Type error_code, const std::string &reason)
     {
         if (ChallengeResponse::is_dynamic(reason)) // dynamic challenge/response?
         {

@@ -24,6 +24,7 @@
 #include <openvpn/tun/extern/fw.hpp>
 #include <openvpn/pki/epkibase.hpp>
 #include <openvpn/transport/client/extern/fw.hpp>
+#include <openvpn/error/error.hpp>
 
 namespace openvpn {
 class OptionList;
@@ -208,6 +209,14 @@ struct ConfigCommon
     // If true and a redirect-gateway profile doesn't also define
     // DNS servers, use the standard Google DNS servers.
     bool googleDnsFallback = false;
+
+    // If true --dhcp-option DOMAIN{-SEARCH} are parsed as split
+    // domains, ADAPTER_DOMAIN_SUFFIX is the only search domain
+#if defined(OPENVPN_PLATFORM_WIN) || defined(OPENVPN_PLATFORM_MAC) || defined(OPENVPN_PLATFORM_LINUX) || defined(OPENVPN_PLATFORM_IPHONE)
+    bool dhcpSearchDomainsAsSplitDomains = true;
+#else
+    bool dhcpSearchDomainsAsSplitDomains = false;
+#endif
 
     // if true, do synchronous DNS lookup.
     bool synchronousDnsLookup = false;
@@ -681,12 +690,12 @@ class OpenVPNClient : public TunBuilderBase,             // expose tun builder v
 
     // send custom app control channel message
     void send_app_control_channel_msg(const std::string &protocol, const std::string &msg);
+
     /**
       @brief Start up the cert check handshake using the given certs and key
       @param client_cert String containing the properly encoded client certificate
       @param clientkey String containing the properly encoded private key for \p client_cert
       @param ca Optional string containing the properly encoded authority
-      @param disableTLS13 disable TLS 1.3 support
 
       This function forwards to ClientProto::Session::start_acc_certcheck, which sets up the
       session ACC certcheck TLS handshake object. Every time this function is called the state of
@@ -694,20 +703,18 @@ class OpenVPNClient : public TunBuilderBase,             // expose tun builder v
     */
     void start_cert_check(const std::string &client_cert,
                           const std::string &clientkey,
-                          const std::optional<const std::string> &ca = std::nullopt,
-                          bool disableTLS13 = false);
+                          const std::optional<const std::string> &ca = std::nullopt);
 
     /**
       @brief Start up the cert check handshake using the given epki_alias string
       @param alias String containing the epki used for callbacks for certificate and signing operations
       @param ca Optional string containing the properly encoded authority
-      @param disableTLS13 disable TLS 1.3 support
 
       This function forwards to ClientProto::Session::start_acc_certcheck, which sets up the
       session ACC certcheck TLS handshake object. Every time this function is called the state of
       the handshake object will be reset and the handshake will be restarted.
     */
-    void start_cert_check_epki(const std::string &alias, const std::optional<const std::string> &ca, bool disableTLS13 = false);
+    void start_cert_check_epki(const std::string &alias, const std::optional<const std::string> &ca);
 
     // Callback for delivering events during connect() call.
     // Will be called from the thread executing connect().
@@ -757,7 +764,7 @@ class OpenVPNClient : public TunBuilderBase,             // expose tun builder v
     void do_connect_async();
     static Status status_from_exception(const std::exception &);
     void parse_extras(const Config &, EvalConfig &);
-    void external_pki_error(const ExternalPKIRequestBase &, const size_t);
+    void external_pki_error(const ExternalPKIRequestBase &, const Error::Type);
     void process_epki_cert_chain(const ExternalPKICertRequest &);
 
     friend class MyClientEvents;
